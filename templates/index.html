@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wan图生视频应用</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        .upload-area {
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 20px;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+        .upload-area:hover {
+            border-color: #007bff;
+        }
+        .upload-area.dragover {
+            border-color: #007bff;
+            background-color: #f0f8ff;
+        }
+        .preview-container {
+            display: flex;
+            gap: 20px;
+            margin: 15px 0;
+        }
+        .file-preview {
+            text-align: center;
+        }
+        .file-preview h4 {
+            margin: 5px 0;
+            font-size: 14px;
+        }
+        .file-preview img, .file-preview video {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            max-width: 100%;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"], select, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+        textarea {
+            height: 80px;
+            resize: vertical;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            display: block;
+            margin: 20px auto;
+            width: 200px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .progress-container {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #007bff;
+            width: 0%;
+            transition: width 0.3s;
+        }
+        .task-list {
+            margin-top: 40px;
+        }
+        .task-item {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+        .task-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .task-status {
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status-pending {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        .status-succeeded {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status-failed {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .download-link {
+            display: inline-block;
+            margin-top: 10px;
+            padding: 8px 15px;
+            background-color: #28a745;
+            color: white;
+            text-decoration: none;
+            border-radius: 3px;
+        }
+        .download-link:hover {
+            background-color: #218838;
+        }
+        .download-link.disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎨 图生视频应用</h1>
+        
+        <div class="upload-area" id="uploadArea">
+            <p>点击选择图片或拖拽图片到此处</p>
+            <p>支持 PNG, JPG, JPEG 格式</p>
+            <input type="file" id="fileInput" accept=".png,.jpg,.jpeg" style="display: none;">
+        </div>
+        
+        <div class="preview-container" id="previewContainer">
+            <img id="previewImage" class="preview-image" src="" alt="预览图片">
+            <p>预览图片</p>
+        </div>
+        
+        <form id="generationForm">
+            <div class="form-group">
+                <label for="prompt">提示词:</label>
+                <textarea id="prompt" name="prompt" placeholder="描述你想要生成的视频内容，例如：让画面中的花朵轻轻摇摆...">让画面动起来，添加自然的动态效果</textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="negative_prompt">反向提示词:</label>
+                <textarea id="negative_prompt" name="negative_prompt" placeholder="描述你不希望在视频中出现的内容"></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="model">模型:</label>
+                <select id="model" name="model">
+                    <option value="wanx2.1-i2v-turbo" selected>wanx2.1-i2v-turbo</option>
+                    <option value="wanx2.1-i2v-plus">wanx2.1-i2v-plus</option>
+                    <option value="wan2.2-i2v-flash">wan2.2-i2v-flash</option>
+                    <option value="wan2.2-i2v-plus">wan2.2-i2v-plus</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="resolution">视频分辨率:</label>
+                <select id="resolution" name="resolution">
+                    <option value="480P">480P</option>
+                    <option value="720P" selected>720P</option>
+                    <option value="1080P">1080P</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="prompt_extend" name="prompt_extend" checked>
+                    启用提示词智能改写
+                </label>
+            </div>
+            
+            <div class="form-group">
+                <label for="aspect_ratio">长宽比例:</label>
+                <select id="aspect_ratio" name="aspect_ratio">
+                    <option value="1:1">1:1</option>
+                    <option value="16:9" selected>16:9</option>
+                    <option value="9:16">9:16</option>
+                    <option value="4:3">4:3</option>
+                    <option value="3:4">3:4</option>
+                </select>
+            </div>
+            
+            <button type="submit" id="generateBtn">生成视频</button>
+        </form>
+        
+        <div class="progress-container" id="progressContainer">
+            <p>正在生成视频，请稍候...</p>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <p id="progressText">准备中...</p>
+        </div>
+        
+        <div class="task-list" id="taskList">
+            <h2>历史任务</h2>
+            <div id="tasksContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        // DOM元素
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const previewContainer = document.getElementById('previewContainer');
+        const previewImage = document.getElementById('previewImage');
+        const generationForm = document.getElementById('generationForm');
+        const generateBtn = document.getElementById('generateBtn');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        const tasksContainer = document.getElementById('tasksContainer');
+        
+        // 事件监听器
+        uploadArea.addEventListener('click', () => {
+            fileInput.click();
+        });
+        
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            
+            if (e.dataTransfer.files.length) {
+                handleFileSelect(e.dataTransfer.files[0]);
+            }
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length) {
+                handleFileSelect(e.target.files[0]);
+            }
+        });
+        
+        generationForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            generateVideo();
+        });
+        
+        // 处理文件选择
+        function handleFileSelect(file) {
+            if (!file.type.match('image.*')) {
+                alert('请选择图片文件 (PNG, JPG, JPEG)');
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                previewImage.src = e.target.result;
+                previewContainer.style.display = 'block';
+            };
+            reader.readAsDataURL(file);
+            
+            // 将文件存储到fileInput中
+            const dataTransfer = new DataTransfer();
+            dataTransfer.items.add(file);
+            fileInput.files = dataTransfer.files;
+        }
+        
+        // 生成视频
+        function generateVideo() {
+            if (!fileInput.files.length) {
+                alert('请先选择一张图片');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('image', fileInput.files[0]);
+            formData.append('prompt', document.getElementById('prompt').value);
+            formData.append('negative_prompt', document.getElementById('negative_prompt').value);
+            formData.append('model', document.getElementById('model').value);
+            formData.append('resolution', document.getElementById('resolution').value);
+            formData.append('aspect_ratio', document.getElementById('aspect_ratio').value);
+            
+            // 禁用按钮并显示进度条
+            generateBtn.disabled = true;
+            generateBtn.textContent = '生成中...';
+            progressContainer.style.display = 'block';
+            progressFill.style.width = '0%';
+            progressText.textContent = '正在提交任务...';
+            
+            // 发送请求
+            fetch('/generate', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // 开始轮询任务状态
+                    pollTaskStatus(data.task_id);
+                } else {
+                    alert('生成失败: ' + data.error);
+                    resetForm();
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('发生错误，请查看控制台');
+                resetForm();
+            });
+        }
+        
+        // 轮询任务状态
+        function pollTaskStatus(taskId) {
+            const poll = setInterval(() => {
+                fetch(`/status/${taskId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        const task = data.task;
+                        updateProgress(task);
+                        
+                        if (task.status === 'SUCCEEDED' || task.status === 'FAILED') {
+                            clearInterval(poll);
+                            loadTasks();
+                            resetForm();
+                        }
+                    } else {
+                        console.error('获取任务状态失败:', data.error);
+                        clearInterval(poll);
+                        resetForm();
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                });
+            }, 2000);
+        }
+        
+        // 更新进度显示
+        function updateProgress(task) {
+            progressText.textContent = `${task.status}: ${task.message || '处理中...'}`;
+            
+            switch (task.status) {
+                case 'PENDING':
+                    progressFill.style.width = '20%';
+                    break;
+                case 'RUNNING':
+                    progressFill.style.width = '60%';
+                    break;
+                case 'SUCCEEDED':
+                    progressFill.style.width = '100%';
+                    progressText.textContent = '生成完成!';
+                    break;
+                case 'FAILED':
+                    progressFill.style.width = '100%';
+                    progressText.textContent = `生成失败: ${task.error || task.message}`;
+                    break;
+                default:
+                    progressFill.style.width = '0%';
+            }
+        }
+        
+        // 重置表单
+        function resetForm() {
+            generateBtn.disabled = false;
+            generateBtn.textContent = '生成视频';
+        }
+        
+        // 加载任务列表
+        function loadTasks() {
+            fetch('/tasks')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    renderTasks(data.tasks);
+                }
+            })
+            .catch(error => {
+                console.error('加载任务列表失败:', error);
+            });
+        }
+        
+        // 渲染任务列表
+        function renderTasks(tasks) {
+            if (tasks.length === 0) {
+                tasksContainer.innerHTML = '<p>暂无历史任务</p>';
+                return;
+            }
+            
+            // 按创建时间倒序排列
+            tasks.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            
+            tasksContainer.innerHTML = tasks.map(task => `
+                <div class="task-item">
+                    <div class="task-header">
+                        <strong>任务ID: ${task.id.substring(0, 8)}...</strong>
+                        <span class="task-status status-${task.status.toLowerCase()}">${task.status}</span>
+                    </div>
+                    <p><strong>提示词:</strong> ${task.prompt}</p>
+                    ${task.negative_prompt ? `<p><strong>反向提示词:</strong> ${task.negative_prompt}</p>` : ''}
+                    <p><strong>模型:</strong> ${task.model} | <strong>分辨率:</strong> ${task.resolution} | <strong>智能改写:</strong> ${task.prompt_extend ? '开启' : '关闭'}</p>
+                    <p><strong>创建时间:</strong> ${new Date(task.created_at).toLocaleString()}</p>
+                    
+                    <!-- 图片和视频预览 -->
+                    <div class="preview-container">
+                        ${task.input_file ? `
+                        <div class="file-preview">
+                            <h4>输入图片:</h4>
+                            <img src="/preview/${task.id}/input" alt="输入图片" style="max-width: 200px; max-height: 200px;">
+                        </div>` : ''}
+                        
+                        ${task.status === 'SUCCEEDED' && task.output_path ? `
+                        <div class="file-preview">
+                            <h4>生成视频:</h4>
+                            <video controls style="max-width: 200px; max-height: 200px;">
+                                <source src="/preview/${task.id}/output" type="video/mp4">
+                                您的浏览器不支持视频播放。
+                            </video>
+                        </div>` : ''}
+                    </div>
+                    
+                    ${task.status === 'SUCCEEDED' ? 
+                        `<a href="/download/${task.id}" class="download-link">下载视频</a>` : 
+                        `<a href="#" class="download-link disabled">下载视频</a>`
+                    }
+                    ${task.status === 'FAILED' ? 
+                        `<p><strong>错误信息:</strong> ${task.error || task.message}</p>` : 
+                        ''
+                    }
+                </div>
+            `).join('');
+        }
+        
+        // 初始化
+        loadTasks();
+        setInterval(loadTasks, 10000); // 每10秒刷新一次任务列表
+    </script>
+</body>
+</html>
