@@ -1,0 +1,17 @@
+[Unit]
+Description=WanX Image to Video Service
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/path/to/your/project/i2v
+Environment=PATH=/path/to/your/venv/bin
+ExecStart=/path/to/your/venv/bin/gunicorn --workers 4 --bind 127.0.0.1:5001 --timeout 120 app:app
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
