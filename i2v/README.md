@@ -85,3 +85,36 @@
 - 网络连接是否正常
 - 图片格式是否符合要求
 - 查看控制台日志获取详细错误信息
+
+## 部署到服务器
+
+应用支持部署到服务器环境，详细部署说明请参考 [DEPLOYMENT.md](DEPLOYMENT.md) 文件。
+
+### 快速开始
+
+1. 安装依赖:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. 配置环境变量:
+   ```bash
+   cp .env.example .env
+   # 编辑 .env 文件，设置你的 DashScope API 密钥
+   ```
+
+3. 启动应用:
+   ```bash
+   python app.py
+   ```
+
+4. 访问应用:
+   打开浏览器访问 `http://localhost:5000`
+
+### 生产环境部署
+
+在生产环境中，建议使用 Gunicorn 和 Nginx:
+
+```bash
+gunicorn -w 4 -b 0.0.0.0:5001 app:app
+```

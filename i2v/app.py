@@ -8,16 +8,20 @@ import requests
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, send_file
 from werkzeug.utils import secure_filename
+from dotenv import load_dotenv
+
+# 加载环境变量
+load_dotenv()
 
 # 初始化Flask应用
 app = Flask(__name__)
 
 # 配置
-UPLOAD_FOLDER = 'uploads'
-OUTPUT_FOLDER = 'downloads'
-TASKS_FILE = 'tasks.json'
+UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', 'uploads')
+OUTPUT_FOLDER = os.environ.get('OUTPUT_FOLDER', 'downloads')
+TASKS_FILE = os.environ.get('TASKS_FILE', 'tasks.json')
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_FILE_SIZE = int(os.environ.get('MAX_FILE_SIZE', 10 * 1024 * 1024))  # 10MB
 
 # 确保目录存在
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -301,6 +305,13 @@ def preview_file(task_id, file_type):
     return jsonify({'success': False, 'error': '文件类型不支持或文件不存在'}), 404
 
 if __name__ == '__main__':
-    # 加载历史任务数据
+    # 加载已存在的任务
     load_tasks()
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    
+    # 从环境变量获取主机和端口配置，默认为 0.0.0.0:5000
+    host = os.environ.get('HOST', '0.0.0.0')
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('DEBUG', 'False').lower() == 'true'
+    
+    print(f"启动应用: http://{host}:{port}")
+    app.run(host=host, port=port, debug=debug)
