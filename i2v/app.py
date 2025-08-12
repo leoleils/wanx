@@ -6,7 +6,7 @@ import base64
 import threading
 import requests
 from datetime import datetime
-from flask import Flask, request, jsonify, render_template, send_file
+from flask import Flask, request, jsonify, render_template, send_file, Response
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 
@@ -101,12 +101,13 @@ def check_task_status(task_id):
                 if task_data['task_status'] == 'SUCCEEDED':
                     # 下载视频
                     video_url = task_data['video_url']
-                    video_response = requests.get(video_url)
+                    video_response = requests.get(video_url, stream=True)
                     
                     if video_response.status_code == 200:
                         output_path = os.path.join(app.config['OUTPUT_FOLDER'], f"{task_id}.mp4")
                         with open(output_path, 'wb') as f:
-                            f.write(video_response.content)
+                            for chunk in video_response.iter_content(chunk_size=8192):
+                                f.write(chunk)
                         
                         task['output_path'] = output_path
                         task['completed_at'] = datetime.now().isoformat()
@@ -281,7 +282,10 @@ def download_video(task_id):
     if not task['output_path'] or not os.path.exists(task['output_path']):
         return jsonify({'success': False, 'error': '视频文件不存在'}), 404
     
-    return send_file(task['output_path'], as_attachment=True)
+    try:
+        return send_file(task['output_path'], as_attachment=True)
+    except FileNotFoundError:
+        return jsonify({'success': False, 'error': '视频文件不存在'}), 404
 
 @app.route('/preview/<task_id>/<file_type>')
 def preview_file(task_id, file_type):
@@ -290,27 +294,45 @@ def preview_file(task_id, file_type):
     if not task:
         return jsonify({'success': False, 'error': '任务不存在'}), 404
     
+    file_path = None
     if file_type == 'input' and task.get('input_file'):
-        if os.path.exists(task['input_file']):
-            return send_file(task['input_file'])
-        else:
-            return jsonify({'success': False, 'error': '输入文件不存在'}), 404
-    
+        file_path = task['input_file']
     elif file_type == 'output' and task.get('output_path'):
-        if os.path.exists(task['output_path']):
-            return send_file(task['output_path'])
-        else:
-            return jsonify({'success': False, 'error': '输出文件不存在'}), 404
+        file_path = task['output_path']
     
-    return jsonify({'success': False, 'error': '文件类型不支持或文件不存在'}), 404
+    if not file_path:
+        return jsonify({'success': False, 'error': '文件类型不支持或文件不存在'}), 404
+    
+    if not os.path.exists(file_path):
+        return jsonify({'success': False, 'error': '文件不存在'}), 404
+    
+    try:
+        # 使用流式传输避免Content-Length不匹配问题
+        def generate():
+            with open(file_path, 'rb') as f:
+                while True:
+                    chunk = f.read(8192)
+                    if not chunk:
+                        break
+                    yield chunk
+        
+        # 根据文件类型设置MIME类型
+        if file_type == 'input':
+            mime_type = 'image/jpeg' if file_path.lower().endswith('.jpg') or file_path.lower().endswith('.jpeg') else 'image/png'
+        else:  # output
+            mime_type = 'video/mp4'
+        
+        return Response(generate(), mimetype=mime_type)
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'文件传输错误: {str(e)}'}), 500
 
 if __name__ == '__main__':
     # 加载已存在的任务
     load_tasks()
     
-    # 从环境变量获取主机和端口配置，默认为 0.0.0.0:5000
+    # 从环境变量获取主机和端口配置，默认为 0.0.0.0:5001
     host = os.environ.get('HOST', '0.0.0.0')
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 5001))
     debug = os.environ.get('DEBUG', 'False').lower() == 'true'
     
     print(f"启动应用: http://{host}:{port}")
