@@ -303,4 +303,4 @@ def preview_file(task_id, file_type):
 if __name__ == '__main__':
     # 加载历史任务数据
     load_tasks()
-    app.run(debug=True, host='0.0.0.0', port=80)
+    app.run(debug=True, host='0.0.0.0', port=5000)
