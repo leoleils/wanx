@@ -187,7 +187,8 @@ def generate_video():
                 "img_url": f"data:image/jpeg;base64,{image_data}"
             },
             "parameters": {
-                "resolution": resolution
+                "resolution": resolution,
+                "prompt_extend": prompt_extend  # 总是包含此参数
             }
         }
         
