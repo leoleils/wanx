@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Wan图生视频应用</title>
+    <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22&gt;&lt;text y=%22.9em%22 font-size=%2290%22&gt;%F0%9F%8E%A8&lt;/text&gt;&lt;/svg&gt;">
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -172,9 +173,11 @@
             <input type="file" id="fileInput" accept=".png,.jpg,.jpeg" style="display: none;">
         </div>
         
-        <div class="preview-container" id="previewContainer">
-            <img id="previewImage" class="preview-image" src="" alt="预览图片">
-            <p>预览图片</p>
+        <div class="preview-container" id="previewContainer" style="display: none;">
+            <div>
+                <img id="previewImage" class="preview-image" src="" alt="预览图片" style="max-width: 200px; max-height: 200px;">
+                <p>预览图片</p>
+            </div>
         </div>
         
         <form id="generationForm">
@@ -214,16 +217,6 @@
                 </label>
             </div>
             
-            <div class="form-group">
-                <label for="aspect_ratio">长宽比例:</label>
-                <select id="aspect_ratio" name="aspect_ratio">
-                    <option value="1:1">1:1</option>
-                    <option value="16:9" selected>16:9</option>
-                    <option value="9:16">9:16</option>
-                    <option value="4:3">4:3</option>
-                    <option value="3:4">3:4</option>
-                </select>
-            </div>
             
             <button type="submit" id="generateBtn">生成视频</button>
         </form>
@@ -257,6 +250,7 @@
         
         // 事件监听器
         uploadArea.addEventListener('click', () => {
+            console.log('点击上传区域');
             fileInput.click();
         });
         
@@ -274,11 +268,13 @@
             uploadArea.classList.remove('dragover');
             
             if (e.dataTransfer.files.length) {
+                console.log('拖拽文件:', e.dataTransfer.files[0]);
                 handleFileSelect(e.dataTransfer.files[0]);
             }
         });
         
         fileInput.addEventListener('change', (e) => {
+            console.log('文件选择变化:', e.target.files);
             if (e.target.files.length) {
                 handleFileSelect(e.target.files[0]);
             }
@@ -286,11 +282,13 @@
         
         generationForm.addEventListener('submit', (e) => {
             e.preventDefault();
+            console.log('表单提交事件触发');
             generateVideo();
         });
         
         // 处理文件选择
         function handleFileSelect(file) {
+            console.log('处理文件选择:', file);
             if (!file.type.match('image.*')) {
                 alert('请选择图片文件 (PNG, JPG, JPEG)');
                 return;
@@ -311,10 +309,13 @@
         
         // 生成视频
         function generateVideo() {
+            console.log('开始生成视频');
             if (!fileInput.files.length) {
                 alert('请先选择一张图片');
                 return;
             }
+            
+            console.log('选中的文件:', fileInput.files[0]);
             
             const formData = new FormData();
             formData.append('image', fileInput.files[0]);
@@ -322,7 +323,10 @@
             formData.append('negative_prompt', document.getElementById('negative_prompt').value);
             formData.append('model', document.getElementById('model').value);
             formData.append('resolution', document.getElementById('resolution').value);
-            formData.append('aspect_ratio', document.getElementById('aspect_ratio').value);
+            // 修复：确保正确传递prompt_extend参数为字符串形式的布尔值
+            formData.append('prompt_extend', document.getElementById('prompt_extend').checked.toString());
+            
+            console.log('表单数据准备完成');
             
             // 禁用按钮并显示进度条
             generateBtn.disabled = true;
@@ -332,32 +336,49 @@
             progressText.textContent = '正在提交任务...';
             
             // 发送请求
+            console.log('发送请求到 /generate');
             fetch('/generate', {
                 method: 'POST',
                 body: formData
             })
-            .then(response => response.json())
+            .then(response => {
+                console.log('收到响应:', response);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
             .then(data => {
+                console.log('响应数据:', data);
                 if (data.success) {
+                    progressText.textContent = '任务已提交，正在处理中...';
                     // 开始轮询任务状态
                     pollTaskStatus(data.task_id);
                 } else {
-                    alert('生成失败: ' + data.error);
-                    resetForm();
+                    throw new Error('生成失败: ' + data.error);
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                alert('发生错误，请查看控制台');
+                progressText.textContent = '请求失败: ' + error.message;
+                alert('发生错误: ' + error.message);
                 resetForm();
             });
         }
         
         // 轮询任务状态
         function pollTaskStatus(taskId) {
+            let retryCount = 0;
+            const maxRetries = 10;
+            
             const poll = setInterval(() => {
                 fetch(`/status/${taskId}`)
-                .then(response => response.json())
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
                 .then(data => {
                     if (data.success) {
                         const task = data.task;
@@ -370,14 +391,28 @@
                         }
                     } else {
                         console.error('获取任务状态失败:', data.error);
-                        clearInterval(poll);
-                        resetForm();
+                        retryCount++;
+                        progressText.textContent = `获取状态失败 (${retryCount}/${maxRetries}): ${data.error}`;
+                        
+                        if (retryCount >= maxRetries) {
+                            clearInterval(poll);
+                            alert('获取任务状态失败次数过多，请刷新页面重试');
+                            resetForm();
+                        }
                     }
                 })
                 .catch(error => {
                     console.error('Error:', error);
+                    retryCount++;
+                    progressText.textContent = `网络错误 (${retryCount}/${maxRetries}): ${error.message}`;
+                    
+                    if (retryCount >= maxRetries) {
+                        clearInterval(poll);
+                        alert('网络错误次数过多，请检查网络连接后刷新页面重试');
+                        resetForm();
+                    }
                 });
-            }, 2000);
+            }, 3000);
         }
         
         // 更新进度显示
@@ -412,11 +447,15 @@
         
         // 加载任务列表
         function loadTasks() {
+            console.log('正在加载任务列表...');
             fetch('/tasks')
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
+                    console.log(`成功加载 ${data.tasks.length} 个任务`);
                     renderTasks(data.tasks);
+                } else {
+                    console.error('加载任务列表失败:', data.error);
                 }
             })
             .catch(error => {
@@ -426,6 +465,7 @@
         
         // 渲染任务列表
         function renderTasks(tasks) {
+            console.log('渲染任务列表，任务数量:', tasks.length);
             if (tasks.length === 0) {
                 tasksContainer.innerHTML = '<p>暂无历史任务</p>';
                 return;
@@ -434,7 +474,9 @@
             // 按创建时间倒序排列
             tasks.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             
-            tasksContainer.innerHTML = tasks.map(task => `
+            let tasksHTML = '';
+            for (const task of tasks) {
+                tasksHTML += `
                 <div class="task-item">
                     <div class="task-header">
                         <strong>任务ID: ${task.id.substring(0, 8)}...</strong>
@@ -450,13 +492,13 @@
                         ${task.input_file ? `
                         <div class="file-preview">
                             <h4>输入图片:</h4>
-                            <img src="/preview/${task.id}/input" alt="输入图片" style="max-width: 200px; max-height: 200px;">
+                            <img src="/preview/${task.id}/input" alt="输入图片" style="max-width: 200px; max-height: 200px;" onerror="this.onerror=null; this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2NjYyIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIGZpbGw9IiM2NjYiPkZpbGUgTm90IEZvdW5kPC90ZXh0Pjwvc3ZnPg==';">
                         </div>` : ''}
                         
-                        ${task.status === 'SUCCEEDED' && task.output_path ? `
+                        ${task.status === 'SUCCEEDED' ? `
                         <div class="file-preview">
                             <h4>生成视频:</h4>
-                            <video controls style="max-width: 200px; max-height: 200px;">
+                            <video controls style="max-width: 200px; max-height: 200px;" onerror="this.onerror=null; this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2NjYyIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIGZpbGw9IiM2NjYiPlZpZGVvIE5vdCBGb3VuZDwvdGV4dD48L3N2Zz4=';">
                                 <source src="/preview/${task.id}/output" type="video/mp4">
                                 您的浏览器不支持视频播放。
                             </video>
@@ -468,16 +510,117 @@
                         `<a href="#" class="download-link disabled">下载视频</a>`
                     }
                     ${task.status === 'FAILED' ? 
-                        `<p><strong>错误信息:</strong> ${task.error || task.message}</p>` : 
+                        `<div class="error-message"><strong>错误信息:</strong> ${task.error || task.message}</div>` : 
                         ''
                     }
-                </div>
-            `).join('');
+                </div>`;
+            }
+            
+            tasksContainer.innerHTML = tasksHTML;
+        }
+        
+        // 检查资源是否存在
+        function checkResource(url) {
+            return fetch(url, { method: 'HEAD' })
+                .then(response => response.ok)
+                .catch(() => false);
         }
         
         // 初始化
+        console.log('初始化应用');
         loadTasks();
-        setInterval(loadTasks, 10000); // 每10秒刷新一次任务列表
+        
+        // 启动定时刷新任务列表（作为SSE的备用方案）
+        setInterval(loadTasks, 30000); // 每30秒刷新一次
+        
+        // 建立SSE连接以接收实时更新
+        let eventSource = null;
+        let reconnectTimeout = null;
+        let heartbeatTimeout = null;
+        
+        function connectSSE() {
+            // 清除之前的重连和心跳定时器
+            if (reconnectTimeout) {
+                clearTimeout(reconnectTimeout);
+                reconnectTimeout = null;
+            }
+            
+            if (heartbeatTimeout) {
+                clearTimeout(heartbeatTimeout);
+                heartbeatTimeout = null;
+            }
+            
+            eventSource = new EventSource('/events');
+            
+            // 设置心跳超时检测
+            heartbeatTimeout = setTimeout(() => {
+                console.warn('SSE心跳超时，重新连接');
+                if (eventSource) {
+                    eventSource.close();
+                    eventSource = null;
+                }
+                reconnectTimeout = setTimeout(connectSSE, 1000);
+            }, 30000); // 30秒无心跳则重连
+            
+            eventSource.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                console.log('收到SSE消息:', data);
+                
+                // 重置心跳超时定时器
+                if (heartbeatTimeout) {
+                    clearTimeout(heartbeatTimeout);
+                    heartbeatTimeout = setTimeout(() => {
+                        console.warn('SSE心跳超时，重新连接');
+                        if (eventSource) {
+                            eventSource.close();
+                            eventSource = null;
+                        }
+                        reconnectTimeout = setTimeout(connectSSE, 1000);
+                    }, 30000);
+                }
+                
+                // 处理不同类型的消息
+                if (data.type === 'tasks_updated') {
+                    console.log('任务已更新，重新加载任务列表');
+                    loadTasks();
+                } else if (data.type === 'heartbeat') {
+                    console.log('收到心跳包');
+                } else if (data.type === 'connected') {
+                    console.log('SSE连接已建立:', data.message);
+                }
+            };
+            
+            eventSource.onerror = function(err) {
+                console.error('SSE连接错误:', err);
+                // 关闭当前连接
+                if (eventSource) {
+                    eventSource.close();
+                    eventSource = null;
+                }
+                // 设置重连定时器
+                reconnectTimeout = setTimeout(connectSSE, 5000);
+            };
+            
+            // 添加连接成功事件
+            eventSource.onopen = function() {
+                console.log('SSE连接已建立');
+                // 重置心跳超时定时器
+                if (heartbeatTimeout) {
+                    clearTimeout(heartbeatTimeout);
+                    heartbeatTimeout = setTimeout(() => {
+                        console.warn('SSE心跳超时，重新连接');
+                        if (eventSource) {
+                            eventSource.close();
+                            eventSource = null;
+                        }
+                        reconnectTimeout = setTimeout(connectSSE, 1000);
+                    }, 30000);
+                }
+            };
+        }
+        
+        // 启动SSE连接
+        connectSSE();
     </script>
 </body>
 </html>
