@@ -149,6 +149,7 @@ def check_task_status(task_id):
                 print(f"任务 {task_id} 已完成 (状态: {task['status']})，停止状态检查")
                 # 任务完成后主动通知前端刷新
                 save_tasks()
+                notify_sse_clients()  # 确保通知前端
                 break
             
             # 检查API密钥
@@ -183,15 +184,21 @@ def check_task_status(task_id):
                 
                 print(f"任务 {task_id} 状态: {task['status']}")
                 
-                # 只有状态发生变化时才保存和通知
-                if previous_status != task['status']:
+                # 保存状态更新并通知前端（状态变化时必须通知，任务完成时也需强制通知）
+                if previous_status != task['status'] or task['status'] == 'SUCCEEDED':
                     # 保存状态更新
                     save_tasks()
+                    # 通知前端更新（除非是状态未变化且不是完成状态）
+                    if previous_status != task['status'] or task['status'] == 'SUCCEEDED':
+                        notify_sse_clients()
                 
                 if task_data['task_status'] == 'SUCCEEDED':
-                    # 下载视频
+                    # 获取视频URL
                     video_url = task_data.get('video_url')
                     print(f"任务 {task_id} 返回的视频URL: {video_url}")
+                    
+                    # 保存video_url到任务数据中（即使没有下载视频也要保存）
+                    task['video_url'] = video_url
                     
                     # 即使没有video_url，任务也可以被视为成功完成
                     # 某些模型可能直接在响应中提供视频内容而不是URL
@@ -200,6 +207,7 @@ def check_task_status(task_id):
                         task['status'] = 'SUCCEEDED'
                         task['completed_at'] = datetime.now().isoformat()
                         save_tasks()
+                        notify_sse_clients()  # 通知前端更新
                         print(f"任务 {task_id} 已标记为完成")
                         break
                     
@@ -215,13 +223,24 @@ def check_task_status(task_id):
                                 for chunk in video_response.iter_content(chunk_size=8192):
                                     f.write(chunk)
                             
-                            task['output_path'] = output_path
-                            task['completed_at'] = datetime.now().isoformat()
-                            task['video_url'] = video_url
-                            task['status'] = 'SUCCEEDED'  # 明确设置状态
-                            # 保存任务状态
-                            save_tasks()
-                            print(f"任务 {task_id} 已完成，视频已保存到 {output_path}")
+                            # 确保视频文件已成功保存到本地后再更新任务状态
+                            if os.path.exists(output_path):
+                                task['output_path'] = output_path
+                                task['completed_at'] = datetime.now().isoformat()
+                                # 注意：这里不再重复设置video_url，因为我们已经在前面设置了
+                                task['status'] = 'SUCCEEDED'  # 明确设置状态
+                                # 保存任务状态
+                                save_tasks()
+                                notify_sse_clients()  # 通知前端更新
+                                print(f"任务 {task_id} 已完成，视频已保存到 {output_path}")
+                            else:
+                                # 视频文件未成功保存，标记任务为失败
+                                task['status'] = 'FAILED'
+                                task['error'] = '视频文件保存失败'
+                                task['error_code'] = 'VIDEO_SAVE_FAILED'
+                                save_tasks()
+                                notify_sse_clients()  # 通知前端更新
+                                print(f"任务 {task_id} 视频文件保存失败")
                             break
                         else:
                             # 下载失败，标记任务为失败
@@ -250,6 +269,7 @@ def check_task_status(task_id):
                     task['error_code'] = task_data.get('code', 'UnknownError')
                     # 保存任务状态
                     save_tasks()
+                    notify_sse_clients()  # 通知前端更新
                     print(f"任务 {task_id} 失败: {task['error']} (错误代码: {task['error_code']})")
                     break
                     
@@ -259,6 +279,7 @@ def check_task_status(task_id):
                 task['status'] = 'FAILED'
                 task['error_code'] = 'TASK_NOT_FOUND'
                 save_tasks()
+                notify_sse_clients()  # 通知前端更新
                 break
             else:
                 print(f"任务 {task_id} 状态查询失败，HTTP状态码: {response.status_code}")
@@ -485,8 +506,8 @@ def events():
             last_heartbeat = time.time()
             while True:
                 try:
-                    # 检查是否需要发送心跳包（每20秒发送一次）
-                    if time.time() - last_heartbeat > 20:
+                    # 检查是否需要发送心跳包（每25秒发送一次）
+                    if time.time() - last_heartbeat >= 25:
                         yield "data: {\"type\": \"heartbeat\"}\n\n"
                         last_heartbeat = time.time()
                         print("SSE心跳包发送")
@@ -494,11 +515,18 @@ def events():
                     # 尝试获取消息，超时1秒
                     message = client_queue.get(timeout=1)
                     yield message
-                    # 重置心跳计时器
-                    last_heartbeat = time.time()
+                    # 注意：不重置心跳计时器，确保按固定间隔发送心跳包
                 except queue.Empty:
                     # 超时继续循环
                     continue
+                except GeneratorExit:
+                    # 客户端断开连接，这是正常情况
+                    print("SSE事件流生成器已关闭")
+                    raise
+        except GeneratorExit:
+            # 客户端断开连接，这是正常情况
+            print("SSE事件流生成器已关闭")
+            raise
         except Exception as e:
             print(f"SSE客户端异常断开: {e}")
         finally:
@@ -580,6 +608,9 @@ def download_video(task_id):
                 
                 # 更新任务信息
                 task['output_path'] = output_path
+                # 确保保留video_url字段（如果任务中已有该字段，则保持不变）
+                if 'video_url' not in task:
+                    task['video_url'] = None
                 save_tasks()
                 
                 # 返回下载的文件
@@ -641,12 +672,20 @@ def preview_file(task_id, file_type):
     try:
         # 使用流式传输避免Content-Length不匹配问题
         def generate():
-            with open(file_path, 'rb') as f:
-                while True:
-                    chunk = f.read(8192)
-                    if not chunk:
-                        break
-                    yield chunk
+            try:
+                with open(file_path, 'rb') as f:
+                    while True:
+                        chunk = f.read(8192)
+                        if not chunk:
+                            break
+                        yield chunk
+            except GeneratorExit:
+                # 客户端断开连接，正常情况，不需要特殊处理
+                print(f"文件传输生成器已关闭: {file_path}")
+                raise
+            except Exception as e:
+                print(f"文件传输生成器错误: {str(e)}")
+                raise
         
         # 根据文件类型设置MIME类型
         if file_type == 'input':

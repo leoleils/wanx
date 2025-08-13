@@ -37,7 +37,7 @@
    python app.py
    ```
 
-5. 打开浏览器访问 http://localhost:5000
+5. 打开浏览器访问 http://localhost:5001
 
 ## 使用方法
 

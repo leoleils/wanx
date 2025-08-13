@@ -552,7 +552,7 @@
             
             eventSource = new EventSource('/events');
             
-            // 设置心跳超时检测
+            // 设置心跳超时检测 (45秒无心跳则重连，给一些缓冲时间)
             heartbeatTimeout = setTimeout(() => {
                 console.warn('SSE心跳超时，重新连接');
                 if (eventSource) {
@@ -560,7 +560,7 @@
                     eventSource = null;
                 }
                 reconnectTimeout = setTimeout(connectSSE, 1000);
-            }, 30000); // 30秒无心跳则重连
+            }, 45000); // 45秒无心跳则重连
             
             eventSource.onmessage = function(event) {
                 const data = JSON.parse(event.data);
@@ -576,7 +576,7 @@
                             eventSource = null;
                         }
                         reconnectTimeout = setTimeout(connectSSE, 1000);
-                    }, 30000);
+                    }, 45000); // 45秒无心跳则重连
                 }
                 
                 // 处理不同类型的消息
@@ -614,7 +614,7 @@
                             eventSource = null;
                         }
                         reconnectTimeout = setTimeout(connectSSE, 1000);
-                    }, 30000);
+                    }, 45000);
                 }
             };
         }
