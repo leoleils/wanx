@@ -33,6 +33,7 @@ app.config['MAX_FILE_SIZE'] = MAX_FILE_SIZE
 
 # 任务存储 (在生产环境中应使用数据库)
 tasks = {}
+tasks_lock = threading.Lock()  # 添加线程锁以确保线程安全
 
 # DashScope API配置
 DASHSCOPE_API_KEY = os.environ.get('DASHSCOPE_API_KEY', 'YOUR_API_KEY_HERE')
@@ -65,11 +66,12 @@ def save_tasks():
     print(f"保存任务数据，当前任务数量: {len(tasks)}")
     # 过滤掉不能序列化的字段
     serializable_tasks = {}
-    for task_id, task in tasks.items():
-        serializable_task = task.copy()
-        # 移除线程对象等不能序列化的字段
-        # 线程对象不应该被存储在任务中，这里确保移除任何可能的线程引用
-        serializable_tasks[task_id] = serializable_task
+    with tasks_lock:  # 使用锁保护对tasks的访问
+        for task_id, task in tasks.items():
+            serializable_task = task.copy()
+            # 移除线程对象等不能序列化的字段
+            # 线程对象不应该被存储在任务中，这里确保移除任何可能的线程引用
+            serializable_tasks[task_id] = serializable_task
     
     try:
         with open(TASKS_FILE, 'w', encoding='utf-8') as f:
@@ -105,14 +107,18 @@ def load_tasks():
     try:
         if os.path.exists(TASKS_FILE):
             with open(TASKS_FILE, 'r', encoding='utf-8') as f:
-                tasks = json.load(f)
+                loaded_tasks = json.load(f)
+            with tasks_lock:  # 使用锁保护对tasks的访问
+                tasks = loaded_tasks
             print(f"已加载 {len(tasks)} 个任务")
         else:
             print(f"任务文件不存在: {TASKS_FILE}")
-            tasks = {}
+            with tasks_lock:  # 使用锁保护对tasks的访问
+                tasks = {}
     except Exception as e:
         print(f"加载任务数据失败: {e}")
-        tasks = {}
+        with tasks_lock:  # 使用锁保护对tasks的访问
+            tasks = {}
 
 def resume_pending_tasks():
     """恢复未完成的任务"""
@@ -120,15 +126,17 @@ def resume_pending_tasks():
     pending_tasks = []
     
     # 筛选出未完成的任务（PENDING, RUNNING状态）
-    for task_id, task in tasks.items():
-        if task.get('status') in ['PENDING', 'RUNNING'] and 'async_task_id' in task:
-            pending_tasks.append(task_id)
+    with tasks_lock:  # 使用锁保护对tasks的访问
+        for task_id, task in tasks.items():
+            if task.get('status') in ['PENDING', 'RUNNING'] and 'async_task_id' in task:
+                pending_tasks.append(task_id)
     
     print(f"发现 {len(pending_tasks)} 个未完成的任务")
     
     # 为每个未完成的任务启动状态检查线程
     for task_id in pending_tasks:
-        task = tasks[task_id]
+        with tasks_lock:  # 使用锁保护对tasks的访问
+            task = tasks[task_id]
         print(f"恢复任务 {task_id} 的状态检查")
         thread = threading.Thread(target=check_task_status, args=(task_id,))
         thread.daemon = True
@@ -139,7 +147,8 @@ def check_task_status(task_id):
     print(f"开始检查任务 {task_id} 的状态")
     while True:
         try:
-            task = tasks.get(task_id)
+            with tasks_lock:  # 使用锁保护对tasks的访问
+                task = tasks.get(task_id)
             if not task:
                 print(f"任务 {task_id} 不存在，停止状态检查")
                 break
@@ -155,8 +164,9 @@ def check_task_status(task_id):
             # 检查API密钥
             if not DASHSCOPE_API_KEY or DASHSCOPE_API_KEY == 'YOUR_API_KEY_HERE':
                 print(f"任务 {task_id} 无法检查状态: API密钥未配置")
-                task['error'] = 'API密钥未配置'
-                task['status'] = 'FAILED'
+                with tasks_lock:  # 使用锁保护对tasks的访问
+                    task['error'] = 'API密钥未配置'
+                    task['status'] = 'FAILED'
                 save_tasks()
                 break
             
@@ -178,34 +188,36 @@ def check_task_status(task_id):
                 result = response.json()
                 print(f"任务 {task_id} 完整响应: {result}")
                 task_data = result['output']
-                previous_status = task.get('status')
-                task['status'] = task_data['task_status']
-                task['message'] = task_data.get('message', '')
+                with tasks_lock:  # 使用锁保护对tasks的访问
+                    previous_status = task.get('status')
+                    task['status'] = task_data['task_status']
+                    task['message'] = task_data.get('message', '')
                 
                 print(f"任务 {task_id} 状态: {task['status']}")
                 
                 # 保存状态更新并通知前端（状态变化时必须通知，任务完成时也需强制通知）
-                if previous_status != task['status'] or task['status'] == 'SUCCEEDED':
+                if previous_status != task['status'] and task['status'] != 'SUCCEEDED':
                     # 保存状态更新
                     save_tasks()
                     # 通知前端更新（除非是状态未变化且不是完成状态）
-                    if previous_status != task['status'] or task['status'] == 'SUCCEEDED':
-                        notify_sse_clients()
+                    notify_sse_clients()             
                 
-                if task_data['task_status'] == 'SUCCEEDED':
+                if previous_status != task['status'] and task_data['task_status'] == 'SUCCEEDED':
                     # 获取视频URL
                     video_url = task_data.get('video_url')
                     print(f"任务 {task_id} 返回的视频URL: {video_url}")
                     
                     # 保存video_url到任务数据中（即使没有下载视频也要保存）
-                    task['video_url'] = video_url
+                    with tasks_lock:  # 使用锁保护对tasks的访问
+                        task['video_url'] = video_url
                     
                     # 即使没有video_url，任务也可以被视为成功完成
                     # 某些模型可能直接在响应中提供视频内容而不是URL
                     if not video_url:
                         print(f"任务 {task_id} 成功完成但未返回视频URL")
-                        task['status'] = 'SUCCEEDED'
-                        task['completed_at'] = datetime.now().isoformat()
+                        with tasks_lock:  # 使用锁保护对tasks的访问
+                            task['status'] = 'SUCCEEDED'
+                            task['completed_at'] = datetime.now().isoformat()
                         save_tasks()
                         notify_sse_clients()  # 通知前端更新
                         print(f"任务 {task_id} 已标记为完成")
@@ -225,28 +237,31 @@ def check_task_status(task_id):
                             
                             # 确保视频文件已成功保存到本地后再更新任务状态
                             if os.path.exists(output_path):
-                                task['output_path'] = output_path
-                                task['completed_at'] = datetime.now().isoformat()
-                                # 注意：这里不再重复设置video_url，因为我们已经在前面设置了
-                                task['status'] = 'SUCCEEDED'  # 明确设置状态
+                                with tasks_lock:  # 使用锁保护对tasks的访问
+                                    task['output_path'] = output_path
+                                    task['completed_at'] = datetime.now().isoformat()
+                                    # 注意：这里不再重复设置video_url，因为我们已经在前面设置了
+                                    task['status'] = 'SUCCEEDED'  # 明确设置状态
                                 # 保存任务状态
                                 save_tasks()
                                 notify_sse_clients()  # 通知前端更新
                                 print(f"任务 {task_id} 已完成，视频已保存到 {output_path}")
                             else:
                                 # 视频文件未成功保存，标记任务为失败
-                                task['status'] = 'FAILED'
-                                task['error'] = '视频文件保存失败'
-                                task['error_code'] = 'VIDEO_SAVE_FAILED'
+                                with tasks_lock:  # 使用锁保护对tasks的访问
+                                    task['status'] = 'FAILED'
+                                    task['error'] = '视频文件保存失败'
+                                    task['error_code'] = 'VIDEO_SAVE_FAILED'
                                 save_tasks()
                                 notify_sse_clients()  # 通知前端更新
                                 print(f"任务 {task_id} 视频文件保存失败")
                             break
                         else:
                             # 下载失败，标记任务为失败
-                            task['status'] = 'FAILED'
-                            task['error'] = f'视频下载失败，HTTP状态码: {video_response.status_code}'
-                            task['error_code'] = 'VIDEO_DOWNLOAD_FAILED'
+                            with tasks_lock:  # 使用锁保护对tasks的访问
+                                task['status'] = 'FAILED'
+                                task['error'] = f'视频下载失败，HTTP状态码: {video_response.status_code}'
+                                task['error_code'] = 'VIDEO_DOWNLOAD_FAILED'
                             save_tasks()
                             print(f"任务 {task_id} 视频下载失败: HTTP {video_response.status_code}")
                             try:
@@ -257,16 +272,18 @@ def check_task_status(task_id):
                             break
                     except requests.exceptions.RequestException as e:
                         # 网络请求异常，标记任务为失败
-                        task['status'] = 'FAILED'
-                        task['error'] = f'视频下载网络异常: {str(e)}'
-                        task['error_code'] = 'VIDEO_DOWNLOAD_EXCEPTION'
+                        with tasks_lock:  # 使用锁保护对tasks的访问
+                            task['status'] = 'FAILED'
+                            task['error'] = f'视频下载网络异常: {str(e)}'
+                            task['error_code'] = 'VIDEO_DOWNLOAD_EXCEPTION'
                         save_tasks()
                         print(f"任务 {task_id} 视频下载网络异常: {str(e)}")
                         break
                         
                 elif task_data['task_status'] == 'FAILED':
-                    task['error'] = task_data.get('message', '任务失败')
-                    task['error_code'] = task_data.get('code', 'UnknownError')
+                    with tasks_lock:  # 使用锁保护对tasks的访问
+                        task['error'] = task_data.get('message', '任务失败')
+                        task['error_code'] = task_data.get('code', 'UnknownError')
                     # 保存任务状态
                     save_tasks()
                     notify_sse_clients()  # 通知前端更新
@@ -275,9 +292,10 @@ def check_task_status(task_id):
                     
             elif response.status_code == 404:
                 print(f"任务 {task_id} 在API服务器上未找到 (404)")
-                task['error'] = '任务在API服务器上未找到'
-                task['status'] = 'FAILED'
-                task['error_code'] = 'TASK_NOT_FOUND'
+                with tasks_lock:  # 使用锁保护对tasks的访问
+                    task['error'] = '任务在API服务器上未找到'
+                    task['status'] = 'FAILED'
+                    task['error_code'] = 'TASK_NOT_FOUND'
                 save_tasks()
                 notify_sse_clients()  # 通知前端更新
                 break
@@ -296,9 +314,10 @@ def check_task_status(task_id):
             # 继续下一次检查
             time.sleep(5)
         except Exception as e:
-            if task_id in tasks:
-                tasks[task_id]['error'] = str(e)
-                save_tasks()
+            with tasks_lock:  # 使用锁保护对tasks的访问
+                if task_id in tasks:
+                    tasks[task_id]['error'] = str(e)
+            save_tasks()
             print(f"检查任务 {task_id} 状态时出错: {e}")
             import traceback
             traceback.print_exc()
@@ -415,23 +434,24 @@ def generate_video():
         if response.status_code == 200:
             result = response.json()
             print(f"API响应数据: {result}")
-            tasks[task_id] = {
-                'id': task_id,
-                'async_task_id': result['output']['task_id'],
-                'status': 'PENDING',
-                'prompt': prompt,
-                'negative_prompt': negative_prompt,
-                'prompt_extend': prompt_extend,
-                'model': model,
-                'resolution': resolution,
-                'created_at': datetime.now().isoformat(),
-                'input_file': file_path,
-                'error': None,
-                'error_code': None,
-                'output_path': None,
-                'message': '',
-                'video_url': None
-            }
+            with tasks_lock:  # 使用锁保护对tasks的访问
+                tasks[task_id] = {
+                    'id': task_id,
+                    'async_task_id': result['output']['task_id'],
+                    'status': 'PENDING',
+                    'prompt': prompt,
+                    'negative_prompt': negative_prompt,
+                    'prompt_extend': prompt_extend,
+                    'model': model,
+                    'resolution': resolution,
+                    'created_at': datetime.now().isoformat(),
+                    'input_file': file_path,
+                    'error': None,
+                    'error_code': None,
+                    'output_path': None,
+                    'message': '',
+                    'video_url': None
+                }
             
             # 启动后台线程检查任务状态
             thread = threading.Thread(target=check_task_status, args=(task_id,))
@@ -460,7 +480,8 @@ def generate_video():
 def get_status(task_id):
     """获取任务状态"""
     print(f"访问任务状态路由 '/status/{task_id}'")
-    task = tasks.get(task_id)
+    with tasks_lock:  # 使用锁保护对tasks的访问
+        task = tasks.get(task_id)
     if not task:
         # 检查是否在文件中存在
         try:
@@ -468,8 +489,9 @@ def get_status(task_id):
                 with open(TASKS_FILE, 'r', encoding='utf-8') as f:
                     file_tasks = json.load(f)
                     if task_id in file_tasks:
-                        tasks[task_id] = file_tasks[task_id]
-                        task = tasks[task_id]
+                        with tasks_lock:  # 使用锁保护对tasks的访问
+                            tasks[task_id] = file_tasks[task_id]
+                            task = tasks[task_id]
         except Exception as e:
             print(f"从文件加载任务时出错: {e}")
     
@@ -486,7 +508,9 @@ def list_tasks():
     print("访问任务列表路由 '/tasks'")
     # 确保从文件中加载最新的任务
     load_tasks()
-    return jsonify({'success': True, 'tasks': list(tasks.values())})
+    with tasks_lock:  # 使用锁保护对tasks的访问
+        tasks_copy = list(tasks.values())
+    return jsonify({'success': True, 'tasks': tasks_copy})
 
 @app.route('/events')
 def events():
@@ -543,9 +567,11 @@ def download_video(task_id):
     print(f"访问下载视频路由 '/download/{task_id}'")
     
     # 打印所有任务ID用于调试
-    print(f"当前所有任务ID: {list(tasks.keys())}")
+    with tasks_lock:  # 使用锁保护对tasks的访问
+        print(f"当前所有任务ID: {list(tasks.keys())}")
     
-    task = tasks.get(task_id)
+    with tasks_lock:  # 使用锁保护对tasks的访问
+        task = tasks.get(task_id)
     if not task:
         print(f"任务 {task_id} 不存在")
         return jsonify({'success': False, 'error': '任务不存在'}), 404
